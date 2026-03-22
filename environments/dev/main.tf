@@ -22,4 +22,5 @@ module "compute" {
   vpc_id    = module.networking.vpc_id
   public_subnet_id   = module.networking.public_subnet_id
   private_subnet_id  = module.networking.private_subnet_id
+  nat_gateway_id = module.networking.nat_gateway_id
 }

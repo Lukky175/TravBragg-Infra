@@ -69,6 +69,7 @@ resource "aws_route" "private_internet" {
   route_table_id         = aws_route_table.private_rt.id
   destination_cidr_block = "0.0.0.0/0"
   nat_gateway_id         = aws_nat_gateway.nat.id
+  depends_on = [ aws_nat_gateway.nat ]
 }
 
 resource "aws_route_table_association" "private_assoc" {
@@ -76,7 +77,9 @@ resource "aws_route_table_association" "private_assoc" {
   route_table_id = aws_route_table.private_rt.id
 }
 
-resource "aws_eip" "nat" {}
+resource "aws_eip" "nat" {
+  domain = "vpc"
+}
 
 resource "aws_nat_gateway" "nat" {
   allocation_id = aws_eip.nat.id

@@ -45,6 +45,6 @@ variable "subnet_private_cidr_block" {
 }
 
 variable "availability_zone" {
-  description = "Availability Zone for the subnet" #"ap-south-1a"
+  description = "Availability Zone for the subnet"
   type        = string
 }

@@ -27,3 +27,6 @@ variable "private_subnet_id" {
   description = "Private Subnet ID"
   type = string
 }
+variable "nat_gateway_id" {
+  type = string
+}

@@ -12,34 +12,45 @@ locals {
   security_groups = {
     master = {
       ingress = [
-        { from_port = 8080,  to_port = 8080,  desc = "Jenkins UI" },
-        { from_port = 22,    to_port = 22,    desc = "SSH" },
-
         # Kubernetes NodePort range
         { from_port = 30000, to_port = 32767, desc = "K8s NodePort" },
 
+        { from_port = 80,  to_port = 80,  desc = "Http Access" },
         # Redis
         { from_port = 6379,  to_port = 6379,  desc = "Redis" },
 
-        # Kubernetes API Server
-        { from_port = 6443,  to_port = 6443,  desc = "K8s API" },
+        { from_port = 443, to_port = 443, desc = "Https Access" },
 
-        # SMTP
-        { from_port = 25,    to_port = 25,    desc = "SMTP" },
-        { from_port = 465,   to_port = 465,   desc = "SMTPS" }
+        { from_port = 465,  to_port = 465,  desc = "SMTPS Access" },
+
+        { from_port = 3000, to_port = 10000, desc = "" },
+
+        { from_port = 22, to_port = 22,    desc = "SSH" },
+
+        { from_port = 25, to_port = 25,    desc = "SMTP" },
+
+        # Kubernetes API Server
+        { from_port = 6443, to_port = 6443,  desc = "K8s API" },
+
+        { from_port = 8080, to_port = 8080,  desc = "Jenkins UI" },
+
+        # Jenkins Agent Communication
+        { from_port = 50000, to_port = 50000, desc = "Jenkins Agent" }
       ]
     }
 
     slave = {
       ingress = [
-        { port = 22, desc = "SSH" }
+        { from_port = 22, to_port = 22, desc = "SSH" },
+        # Jenkins Agent Communication
+        { from_port = 50000, to_port = 50000, desc = "Jenkins Agent" }
       ]
     }
 
     app = {
       ingress = [
-        { port = 80, desc = "HTTP" },
-        { port = 443, desc = "HTTPS" }
+        { from_port = 80, to_port = 80, desc = "HTTP" },
+        { from_port = 443, to_port = 443, desc = "HTTPS" }
       ]
     }
   }
@@ -100,20 +111,29 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_ssm_role.name
 }
 
+resource "aws_instance" "master" {
+  ami           = data.aws_ami.ubuntu.id
+  instance_type = var.instance_type
+  subnet_id     = var.public_subnet_id
+  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
+  associate_public_ip_address = true
+  user_data = file("${path.module}/jenkins_master.sh")
+
+  vpc_security_group_ids = [aws_security_group.ec2_sg["master"].id]
+}
+
 locals {
   instances = {
-    app = {
-      user_data = "app_server.sh"
+    slave = {
+      user_data = templatefile("${path.module}/jenkins_slave.sh", {
+        master_ip = aws_instance.master.private_ip
+      })
       subnet_id = var.private_subnet_id
       public_ip = false
     }
-    master = {
-      user_data = "jenkins_master.sh"
-      subnet_id = var.public_subnet_id
-      public_ip = true
-    }
-    slave = {
-      user_data = "jenkins_slave.sh"
+
+    app = {
+      user_data = file("${path.module}/app_server.sh")
       subnet_id = var.private_subnet_id
       public_ip = false
     }
@@ -122,6 +142,9 @@ locals {
 
 resource "aws_instance" "ec2" {
   for_each = local.instances
+  depends_on = [ 
+    var.nat_gateway_id
+   ]
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   subnet_id              = each.value.subnet_id
@@ -138,7 +161,7 @@ resource "aws_instance" "ec2" {
     volume_type = "gp3"
     encrypted   = true
   }
-  user_data                   = file("${path.module}/${each.value.user_data}")
+  user_data = each.value.user_data
   user_data_replace_on_change = true
 
   tags = {
