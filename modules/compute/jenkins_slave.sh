@@ -1,49 +1,71 @@
 #!/bin/bash
-echo "USER DATA STARTED at $(date)" > /home/ubuntu/userdata_started.txt
 
-# Redirect all output to log file for debugging
 exec > /var/log/user-data-debug.log 2>&1
 set -euxo pipefail
 
+export DEBIAN_FRONTEND=noninteractive
+
 echo "===== Jenkins Slave Bootstrap ====="
 
-until ping -c 1 google.com; do
-  echo "Waiting for internet..."
+# Wait for internet
+until ping -c 1 google.com > /dev/null 2>&1; do
   sleep 5
 done
 
+echo "Internet is UP"
+
+# Install dependencies
 apt update -y
-apt install docker.io curl jq -y
+apt install -y openjdk-17-jdk curl
 
-systemctl start docker
-systemctl enable docker
-usermod -aG docker ubuntu
+update-alternatives --set java /usr/lib/jvm/java-17-openjdk-amd64/bin/java
 
-docker pull jenkins/inbound-agent
+# Create jenkins user safely
+id -u jenkins &>/dev/null || useradd -m -s /bin/bash jenkins
 
-JENKINS_URL="http://${master_ip}:8080"
-USER="admin"
-PASS="admin123"
+# Setup directory
+mkdir -p /home/jenkins
+chown -R jenkins:jenkins /home/jenkins
 
-echo "Waiting for Jenkins..."
-sleep 120   # IMPORTANT
+MASTER_URL="http://${master_ip}:8080"
 
-# Get crumb
-CRUMB=$(curl -s -u $USER:$PASS $JENKINS_URL/crumbIssuer/api/json | jq -r .crumb)
+# Wait for Jenkins master
+until curl -s $MASTER_URL/crumbIssuer/api/json > /dev/null 2>&1; do
+  echo "Waiting for Jenkins master..."
+  sleep 5
+done
 
-# Get agent secret
-SECRET=$(curl -s -u $USER:$PASS \
-  "$JENKINS_URL/computer/slave-node/jenkins-agent.jnlp" \
-  | grep -oP '(?<=<argument>).*?(?=</argument>)' | head -n 1)
+echo "Master is reachable"
 
-echo "Secret fetched"
+cd /home/jenkins
+
+# Download agent.jar with retry
+until curl -f -O $MASTER_URL/jnlpJars/agent.jar; do
+  echo "Retrying agent.jar download..."
+  sleep 5
+done
+
+# Fetch secret with retry
+until SECRET=$(curl -s -u admin:admin123 \
+  $MASTER_URL/computer/slave-node/jenkins-agent.jnlp \
+  | grep -oP '(?<=<argument>)[^<]+' | head -n 1); do
+  echo "Waiting for agent secret..."
+  sleep 5
+done
+
+echo "SECRET fetched"
+
+# Fix ownership again (important)
+chown -R jenkins:jenkins /home/jenkins
+
+echo "Starting agent..."
 
 # Run agent
-docker run -d \
-  --name jenkins-agent \
-  -e JENKINS_URL=$JENKINS_URL \
-  -e JENKINS_AGENT_NAME=slave-node \
-  -e JENKINS_SECRET=$SECRET \
-  jenkins/inbound-agent
+sudo -u jenkins nohup java -jar /home/jenkins/agent.jar \
+  -url $MASTER_URL \
+  -name slave-node \
+  -secret $SECRET \
+  -workDir "/home/jenkins" \
+  -webSocket > /home/jenkins/agent.log 2>&1 &
 
 echo "===== Slave Connected ====="

@@ -23,7 +23,7 @@ locals {
 
         { from_port = 465,  to_port = 465,  desc = "SMTPS Access" },
 
-        { from_port = 3000, to_port = 10000, desc = "" },
+        { from_port = 3000, to_port = 10000, desc = "As Per Documentation" },
 
         { from_port = 22, to_port = 22,    desc = "SSH" },
 
@@ -43,7 +43,9 @@ locals {
       ingress = [
         { from_port = 22, to_port = 22, desc = "SSH" },
         # Jenkins Agent Communication
-        { from_port = 50000, to_port = 50000, desc = "Jenkins Agent" }
+        { from_port = 50000, to_port = 50000, desc = "Jenkins Agent" },
+        { from_port = 8080, to_port = 8080, desc = "Jenkins UI" },
+
       ]
     }
 
@@ -118,6 +120,7 @@ resource "aws_instance" "master" {
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
   associate_public_ip_address = true
   user_data = file("${path.module}/jenkins_master.sh")
+  user_data_replace_on_change = true
 
   vpc_security_group_ids = [aws_security_group.ec2_sg["master"].id]
 }
@@ -142,9 +145,6 @@ locals {
 
 resource "aws_instance" "ec2" {
   for_each = local.instances
-  depends_on = [ 
-    var.nat_gateway_id
-   ]
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   subnet_id              = each.value.subnet_id
