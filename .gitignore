@@ -1,0 +1,58 @@
+# =========================
+# Terraform Core
+# =========================
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Ignore sensitive variable files
+*.tfvars
+*.tfvars.json
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI configuration files
+.terraformrc
+terraform.rc
+
+# Lock file (keep this tracked for consistency)
+# .terraform.lock.hcl
+
+
+# =========================
+# Terraform Cloud / Workspace
+# =========================
+*.backup
+
+
+# =========================
+# Logs
+# =========================
+*.log
+
+
+# =========================
+# OS / Editor files
+# =========================
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
+
+# JetBrains
+.idea/
+
+
+# =========================
+# Misc
+# =========================
+*.swp
+*.bak
+*.tmp
