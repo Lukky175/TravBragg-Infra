@@ -14,6 +14,21 @@ systemctl start docker
 systemctl enable docker
 usermod -aG docker ubuntu
 
+# Install AWS CLI
+apt install -y awscli
+
+# Fetch DockerHub credentials
+SECRET_JSON=$(aws secretsmanager get-secret-value \
+  --secret-id dockerhub-creds \
+  --region ap-south-1 \
+  --query SecretString \
+  --output text) || { echo "Failed to fetch secret"; exit 1; }
+
+DOCKER_USER=$(echo $SECRET_JSON | jq -r .username)
+DOCKER_PASS=$(echo $SECRET_JSON | jq -r .password)
+
+echo "Docker creds fetched"
+
 # Get PRIVATE IP (ONLY ONCE)
 PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
 echo "Private IP: $PRIVATE_IP"
@@ -28,9 +43,14 @@ cat <<EOF > /var/jenkins_home/init.groovy.d/basic-security.groovy
 import jenkins.model.*
 import hudson.security.*
 import hudson.security.csrf.DefaultCrumbIssuer
+import com.cloudbees.plugins.credentials.*
+import com.cloudbees.plugins.credentials.domains.*
+import com.cloudbees.plugins.credentials.impl.*
+import com.cloudbees.plugins.credentials.SystemCredentialsProvider
 
 def instance = Jenkins.getInstance()
 
+// ===== SECURITY SETUP (YOUR ORIGINAL) =====
 def hudsonRealm = new HudsonPrivateSecurityRealm(false)
 hudsonRealm.createAccount("admin","admin123")
 instance.setSecurityRealm(hudsonRealm)
@@ -40,11 +60,37 @@ instance.setAuthorizationStrategy(strategy)
 
 instance.setCrumbIssuer(new DefaultCrumbIssuer(true))
 
-// ✅ FORCE CORRECT URL
+// ===== SET JENKINS URL =====
 def location = instance.getDescriptor("jenkins.model.JenkinsLocationConfiguration")
 location.setUrl("http://${PRIVATE_IP}:8080/")
 location.save()
 
+// ===== ADD DOCKERHUB CREDENTIALS =====
+
+// Read env variables passed from Docker
+def dockerUser = System.getenv("DOCKER_USER")
+def dockerPass = System.getenv("DOCKER_PASS")
+
+if (dockerUser != null && dockerPass != null) {
+    println("Adding DockerHub credentials...")
+
+    def domain = Domain.global()
+
+    def creds = new UsernamePasswordCredentialsImpl(
+        CredentialsScope.GLOBAL,
+        "dockerhub-creds",
+        "DockerHub Credentials",
+        dockerUser,
+        dockerPass
+    )
+
+    SystemCredentialsProvider.getInstance().getStore().addCredentials(domain, creds)
+
+} else {
+    println("DockerHub credentials not found in environment variables")
+}
+
+// ===== SAVE CONFIG =====
 instance.save()
 EOF
 
@@ -58,6 +104,9 @@ docker run -d \
   -p 8080:8080 \
   -p 50000:50000 \
   -e JAVA_OPTS="-Djenkins.install.runSetupWizard=false" \
+  -e DOCKER_USER=$DOCKER_USER \
+  -e DOCKER_PASS=$DOCKER_PASS \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   -v /var/jenkins_home:/var/jenkins_home \
   jenkins/jenkins:lts
 
@@ -68,7 +117,11 @@ until curl -s http://localhost:8080/login > /dev/null; do
 done
 
 echo "Installing required plugins..."
-sudo docker exec jenkins-master jenkins-plugin-cli --plugins instance-identity
+docker exec jenkins-master jenkins-plugin-cli --plugins \
+  instance-identity \
+  credentials \
+  plain-credentials \
+  ssh-credentials
 echo "Plugin installation triggered, waiting for completion..."
 sleep 30 
 
