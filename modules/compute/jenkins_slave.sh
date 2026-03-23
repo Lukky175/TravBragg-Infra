@@ -16,7 +16,7 @@ echo "Internet is UP"
 
 # Install dependencies
 apt update -y
-apt install -y openjdk-17-jdk curl ca-certificates
+apt install -y openjdk-17-jdk curl ca-certificates jq
 
 # Create jenkins user safely
 id -u jenkins &>/dev/null || useradd -m -s /bin/bash jenkins
@@ -37,7 +37,7 @@ echo "Jenkins core is UP"
 
 # ✅ Wait for node creation
 until curl -s -u admin:admin123 \
-  $MASTER_URL/computer/slave-node/api/json | grep -q '"displayName"'; do
+  $MASTER_URL/computer/slave-node/api/json | jq -e '.displayName=="slave-node"' > /dev/null; do
   echo "Waiting for Jenkins node creation..."
   sleep 5
 done
@@ -62,15 +62,20 @@ done
 echo "JNLP endpoint ready"
 
 # ✅ Fetch secret safely
-until SECRET=$(curl -s -u admin:admin123 \
-  $MASTER_URL/computer/slave-node/jenkins-agent.jnlp \
-  | grep -oP '(?<=<argument>)[^<]+' \
-  | tail -n 1) && [ -n "$SECRET" ]; do
-  echo "Waiting for valid agent secret..."
+while true; do
+  SECRET=$(curl -s -u admin:admin123 \
+    $MASTER_URL/computer/slave-node/ \
+    | grep -oP '(?<=-secret )[a-f0-9]+' \
+    | head -n 1)
+
+  if [ -n "$SECRET" ]; then
+    echo "SECRET fetched: $SECRET"
+    break
+  fi
+
+  echo "Waiting for secret..."
   sleep 5
 done
-
-echo "SECRET fetched: $SECRET"
 
 # Fix ownership
 chown -R jenkins:jenkins /home/jenkins

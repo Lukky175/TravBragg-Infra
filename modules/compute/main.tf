@@ -44,8 +44,6 @@ locals {
         { from_port = 22, to_port = 22, desc = "SSH" },
         # Jenkins Agent Communication
         { from_port = 50000, to_port = 50000, desc = "Jenkins Agent" },
-        { from_port = 8080, to_port = 8080, desc = "Jenkins UI" },
-
       ]
     }
 

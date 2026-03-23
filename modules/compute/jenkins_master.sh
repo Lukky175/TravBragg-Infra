@@ -56,16 +56,45 @@ docker run -d \
   --name jenkins-master \
   --restart=always \
   -p 8080:8080 \
+  -p 50000:50000 \
+  -e JAVA_OPTS="-Djenkins.install.runSetupWizard=false" \
   -v /var/jenkins_home:/var/jenkins_home \
   jenkins/jenkins:lts
 
-# Wait for Jenkins API
-echo "Waiting for Jenkins to stabilize..."
-
-until curl -s http://localhost:8080/api/json | jq -e '.mode' > /dev/null; do
-  echo "Still initializing..."
+# Wait for container to start Jenkins properly
+until curl -s http://localhost:8080/login > /dev/null; do
+  echo "Waiting before plugin install..."
   sleep 5
 done
+
+echo "Installing required plugins..."
+sudo docker exec jenkins-master jenkins-plugin-cli --plugins instance-identity
+echo "Plugin installation triggered, waiting for completion..."
+sleep 30 
+
+echo "Restarting Jenkins after plugin install..."
+sudo docker restart jenkins-master
+echo "Waiting for Jenkins to restart..."
+sleep 30
+
+echo "Waiting for Jenkins to fully initialize..."
+
+# Wait for UI
+until curl -s http://localhost:8080/login > /dev/null; do
+  echo "Waiting for Jenkins UI..."
+  sleep 5
+done
+
+# Wait for auth to work
+until curl -s -u admin:admin123 http://localhost:8080/api/json > /dev/null; do
+  echo "Waiting for Jenkins auth..."
+  sleep 5
+done
+
+echo "Jenkins ready for API operations"
+sleep 30   # allow plugins + identity to initialize
+
+echo "Jenkins fully ready"
 
 echo "Core ready → waiting extra..."
 # Wait until admin user actually works (init scripts done)
@@ -112,18 +141,19 @@ RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -X POST "$JENKINS_URL/computer/doCreateItem?name=slave-node&type=hudson.slaves.DumbSlave" \
   --data-urlencode 'json={
-    "name":"slave-node",
-    "nodeDescription":"Auto-created agent",
-    "numExecutors":"1",
-    "remoteFS":"/home/jenkins",
-    "labelString":"linux",
-    "mode":"NORMAL",
-    "type":"hudson.slaves.DumbSlave",
-    "retentionStrategy":{"stapler-class":"hudson.slaves.RetentionStrategy$Always"},
-    "launcher":{
-      "stapler-class":"hudson.slaves.JNLPLauncher"
-    }
-  }')
+  "name":"slave-node",
+  "nodeDescription":"Auto-created agent",
+  "numExecutors":"1",
+  "remoteFS":"/home/jenkins",
+  "labelString":"linux",
+  "mode":"NORMAL",
+  "type":"hudson.slaves.DumbSlave",
+  "retentionStrategy":{"stapler-class":"hudson.slaves.RetentionStrategy$Always"},
+  "launcher":{
+    "stapler-class":"hudson.slaves.JNLPLauncher",
+    "webSocket": false
+  }
+}')
 
 if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "302" ]; then
   echo "Agent created successfully"
