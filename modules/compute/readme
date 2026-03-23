@@ -5,8 +5,8 @@ On Master Connect via SSM (for jenkins_admin_password)
 Future:-
 Fixed Exposed Ports and Ips
 
-
+sudo cat /home/jenkins/agent.log
 
 terraform destroy -auto-approve
-
 terraform apply -auto-approve
+

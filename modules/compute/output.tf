@@ -9,3 +9,6 @@ output "master_public_ip" {
 output "argocd_url" {
   value = "http://${aws_instance.master.public_ip}:30080"
 }
+output "master_private_ip" {
+  value = aws_instance.master.private_ip
+}

@@ -14,11 +14,15 @@ systemctl start docker
 systemctl enable docker
 usermod -aG docker ubuntu
 
+# Get PRIVATE IP (ONLY ONCE)
+PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+echo "Private IP: $PRIVATE_IP"
+
 # Prepare Jenkins home
 mkdir -p /var/jenkins_home/init.groovy.d
 chown -R 1000:1000 /var/jenkins_home
 
-# Create admin user + ENABLE CSRF
+# Create Groovy init script
 cat <<EOF > /var/jenkins_home/init.groovy.d/basic-security.groovy
 #!groovy
 import jenkins.model.*
@@ -34,47 +38,64 @@ instance.setSecurityRealm(hudsonRealm)
 def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
 instance.setAuthorizationStrategy(strategy)
 
-// ENABLE CSRF (IMPORTANT)
 instance.setCrumbIssuer(new DefaultCrumbIssuer(true))
+
+// ✅ FORCE CORRECT URL
+def location = instance.getDescriptor("jenkins.model.JenkinsLocationConfiguration")
+location.setUrl("http://${PRIVATE_IP}:8080/")
+location.save()
 
 instance.save()
 EOF
 
-# Pull Jenkins
+# Pull Jenkins image
 docker pull jenkins/jenkins:lts
 
-# Run Jenkins
-
-#AWS EC2 Metadata Service (IMDS) Every EC2 instance has a special internal endpoint
-#169.254.169.254
-#It returns instance information dynamically
-
-MASTER_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-
+# Run Jenkins (NO port 50000)
 docker run -d \
   --name jenkins-master \
+  --restart=always \
   -p 8080:8080 \
-  -p 50000:50000 \
-  -e JAVA_OPTS="-Djenkins.install.runSetupWizard=false -Djenkins.model.JenkinsLocationConfiguration.url=http://${MASTER_IP}:8080/" \
   -v /var/jenkins_home:/var/jenkins_home \
   jenkins/jenkins:lts
 
-# Wait until Jenkins is ready
-echo "Waiting for Jenkins API to be ready..."
+# Wait for Jenkins API
+echo "Waiting for Jenkins to stabilize..."
 
-until curl -s http://localhost:8080/crumbIssuer/api/json | jq .crumb > /dev/null 2>&1; do
-  echo "Jenkins still starting..."
+until curl -s http://localhost:8080/api/json | jq -e '.mode' > /dev/null; do
+  echo "Still initializing..."
   sleep 5
 done
 
-echo "Jenkins is FULLY READY"
-echo "Jenkins is UP"
+echo "Core ready → waiting extra..."
+# Wait until admin user actually works (init scripts done)
+until curl -s -u admin:admin123 http://localhost:8080/api/json > /dev/null; do
+  echo "Waiting for Jenkins init scripts..."
+  sleep 5
+done
+
+sleep 10
+
+# Wait for computer API
+until curl -s http://localhost:8080/computer/api/json | grep -q '"_class"'; do
+  echo "Jenkins not fully ready..."
+  sleep 5
+done
+
+echo "Jenkins ready"
+sleep 20
 
 JENKINS_URL="http://localhost:8080"
 USER="admin"
 PASS="admin123"
 
-# Get crumb + cookie
+# Wait for auth
+until curl -s -u $USER:$PASS $JENKINS_URL/api/json > /dev/null; do
+  echo "Waiting for auth..."
+  sleep 5
+done
+
+# Get crumb
 CRUMB_RESPONSE=$(curl -s -c cookies.txt -u $USER:$PASS \
   "$JENKINS_URL/crumbIssuer/api/json")
 
@@ -99,7 +120,9 @@ RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
     "mode":"NORMAL",
     "type":"hudson.slaves.DumbSlave",
     "retentionStrategy":{"stapler-class":"hudson.slaves.RetentionStrategy$Always"},
-    "launcher":{"stapler-class":"hudson.slaves.JNLPLauncher"}
+    "launcher":{
+      "stapler-class":"hudson.slaves.JNLPLauncher"
+    }
   }')
 
 if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "302" ]; then
